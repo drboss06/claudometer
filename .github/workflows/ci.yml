@@ -13,14 +13,26 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.0.x
 
       - name: Build
         run: dotnet build ClaudeUsageTray.sln --configuration Release
 
+      - name: Test
+        run: dotnet test ClaudeUsageTray.sln --configuration Release --no-build
+
       - name: Offline parser checks
-        run: dotnet src/ClaudeUsageTray/bin/Release/net8.0-windows/win-x64/ClaudeUsageTray.dll --self-test
+        run: dotnet run --project src/ClaudeUsageTray/ClaudeUsageTray.csproj --configuration Release --no-build -- --self-test
+
+      - name: Publish smoke test (single-file, self-contained)
+        run: >-
+          dotnet publish src/ClaudeUsageTray/ClaudeUsageTray.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          --output publish/ci

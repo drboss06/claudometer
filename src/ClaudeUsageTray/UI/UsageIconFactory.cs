@@ -5,9 +5,9 @@ namespace ClaudeUsageTray.UI;
 
 internal static class UsageIconFactory
 {
-    public static Icon Create(double utilization, bool hasError = false)
+    public static Icon Create(double utilization, bool hasError = false, bool lightBackground = false)
     {
-        using var bitmap = CreateBitmap(32, utilization, hasError);
+        using var bitmap = CreateBitmap(32, utilization, hasError, lightBackground);
         var handle = bitmap.GetHicon();
         try
         {
@@ -20,8 +20,11 @@ internal static class UsageIconFactory
         }
     }
 
-    internal static Bitmap CreateBitmap(int size, double utilization, bool hasError = false)
+    internal static Bitmap CreateBitmap(int size, double utilization, bool hasError = false, bool lightBackground = false)
     {
+        // On a light taskbar draw the battery with a dark outline so it stays legible.
+        var outline = lightBackground ? Color.FromArgb(45, 49, 56) : Color.FromArgb(235, 240, 243);
+
         var bitmap = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.Clear(Color.Transparent);
@@ -29,10 +32,13 @@ internal static class UsageIconFactory
         graphics.ScaleTransform(size / 32f, size / 32f);
 
         var body = new RectangleF(3.5f, 7.5f, 23f, 17f);
-        using var outlinePen = new Pen(Color.FromArgb(235, 240, 243), 2.2f);
+        using var outlinePen = new Pen(outline, 2.2f);
         using var bodyPath = RoundedRectangle(body, 3.5f);
         graphics.DrawPath(outlinePen, bodyPath);
-        graphics.FillRectangle(Brushes.White, 27f, 12f, 2.5f, 8f);
+        using (var capBrush = new SolidBrush(outline))
+        {
+            graphics.FillRectangle(capBrush, 27f, 12f, 2.5f, 8f);
+        }
 
         var clamped = Math.Clamp(utilization, 0, 100);
         var remaining = 100 - clamped;
@@ -48,9 +54,10 @@ internal static class UsageIconFactory
 
         if (hasError)
         {
-            using var errorPen = new Pen(Color.White, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            using var errorPen = new Pen(outline, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            using var dotBrush = new SolidBrush(outline);
             graphics.DrawLine(errorPen, 14.8f, 11f, 14.8f, 17f);
-            graphics.DrawEllipse(Pens.White, 14f, 19f, 1.6f, 1.6f);
+            graphics.FillEllipse(dotBrush, 14f, 19f, 1.8f, 1.8f);
         }
 
         return bitmap;

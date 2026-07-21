@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using ClaudeUsageTray.Models;
+using ClaudeUsageTray.Resources;
 
 namespace ClaudeUsageTray.Infrastructure;
 
@@ -47,8 +48,7 @@ internal sealed class CredentialsProvider
             return wslCredentials;
         }
 
-        throw new CredentialsNotFoundException(
-            "Claude Code credentials were not found. Run `claude auth login` in Windows or your default WSL distribution, then refresh.");
+        throw new CredentialsNotFoundException(Strings.CredentialsNotFound);
     }
 
     internal static ClaudeCredentials? TryParse(string json, string source)
@@ -90,6 +90,12 @@ internal sealed class CredentialsProvider
 
     private static async Task<ClaudeCredentials?> TryReadFromDefaultWslAsync(CancellationToken cancellationToken)
     {
+        // Bound the WSL launch: a cold/wedged distro must not hang the refresh loop.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+        var token = timeoutCts.Token;
+
+        Process? process = null;
         try
         {
             var startInfo = new ProcessStartInfo
@@ -102,31 +108,59 @@ internal sealed class CredentialsProvider
             };
             startInfo.ArgumentList.Add("--exec");
             startInfo.ArgumentList.Add("sh");
-            startInfo.ArgumentList.Add("-lc");
-            startInfo.ArgumentList.Add("test -f ~/.claude/.credentials.json && cat ~/.claude/.credentials.json");
+            // Plain (non-login) shell: reading a file needs no profile scripts.
+            startInfo.ArgumentList.Add("-c");
+            startInfo.ArgumentList.Add("cat \"$HOME/.claude/.credentials.json\" 2>/dev/null");
 
-            using var process = Process.Start(startInfo);
+            process = Process.Start(startInfo);
             if (process is null)
             {
                 return null;
             }
 
-            var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
-            var output = await outputTask;
+            // Drain both pipes concurrently so a chatty stderr cannot deadlock the child.
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(token);
+            var stderrTask = process.StandardError.ReadToEndAsync(token);
+            await process.WaitForExitAsync(token);
+            var output = await stdoutTask;
+            await stderrTask;
 
             return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output)
                 ? TryParse(output, "Default WSL: ~/.claude/.credentials.json")
                 : null;
         }
-        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            if (exception is OperationCanceledException)
-            {
-                throw;
-            }
-
+            KillQuietly(process);
+            throw; // Genuine application shutdown.
+        }
+        catch (OperationCanceledException)
+        {
+            KillQuietly(process); // Our own 5s timeout: the launch is wedged.
             return null;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
+    private static void KillQuietly(Process? process)
+    {
+        try
+        {
+            if (process is { HasExited: false })
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            // Best effort.
         }
     }
 

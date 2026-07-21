@@ -36,8 +36,8 @@ internal static class Program
         if (!isFirstInstance)
         {
             MessageBox.Show(
-                "Claude Usage Tray is already running.",
-                "Claude Usage Tray",
+                Resources.Strings.AlreadyRunning,
+                AppInfo.Name,
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
@@ -48,6 +48,21 @@ internal static class Program
 
     private static void RenderPreview(string outputPath)
     {
+        var commandLine = Environment.GetCommandLineArgs();
+
+        var culture = commandLine.FirstOrDefault(arg => arg is "en" or "ru");
+        if (culture is not null)
+        {
+            var info = new System.Globalization.CultureInfo(culture);
+            System.Globalization.CultureInfo.CurrentUICulture = info;
+            System.Globalization.CultureInfo.CurrentCulture = info;
+        }
+
+        if (commandLine.Contains("light", StringComparer.OrdinalIgnoreCase))
+        {
+            UI.AppPalette.Current = UI.Palette.Light;
+        }
+
         using var form = new UsagePopupForm();
         form.SetSnapshot(UsageSnapshot.CreateDemo());
         form.StartPosition = FormStartPosition.Manual;

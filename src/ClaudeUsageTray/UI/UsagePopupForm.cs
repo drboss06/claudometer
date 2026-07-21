@@ -1,89 +1,79 @@
 using ClaudeUsageTray.Models;
+using ClaudeUsageTray.Resources;
 
 namespace ClaudeUsageTray.UI;
 
 internal sealed class UsagePopupForm : Form
 {
+    private static readonly Font TitleFont = new("Segoe UI Semibold", 14f, FontStyle.Bold);
+    private static readonly Font SmallFont = new("Segoe UI", 8.5f);
+    private static readonly Font CloseFont = new("Segoe UI", 14f);
+
+    private readonly Label _titleLabel;
     private readonly Label _planLabel;
+    private readonly Label _expiryLabel;
     private readonly Label _statusLabel;
-    private readonly FlowLayoutPanel _metricsPanel;
+    private readonly Button _closeButton;
     private readonly Button _refreshButton;
+    private readonly Button _actionButton;
+    private readonly FlowLayoutPanel _metricsPanel;
     private readonly System.Windows.Forms.Timer _countdownTimer;
-    private UsageSnapshot? _snapshot;
+    private IReadOnlyDictionary<string, IReadOnlyList<double>>? _history;
+    // Desired visibility, tracked explicitly because Control.Visible reflects the
+    // parent's state and reads false until the form is actually shown.
+    private bool _expiryShown;
+    private bool _actionShown;
 
     public UsagePopupForm()
     {
-        AutoScaleMode = AutoScaleMode.Dpi;
-        BackColor = AppPalette.Window;
-        ClientSize = new Size(380, 344);
+        AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         MinimizeBox = false;
         Name = nameof(UsagePopupForm);
-        Padding = new Padding(18);
         ShowIcon = false;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
-        Text = "Claude Usage Tray";
+        Text = AppInfoText();
         TopMost = true;
 
-        var titleLabel = new Label
-        {
-            AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 14f, FontStyle.Bold),
-            ForeColor = AppPalette.Text,
-            Location = new Point(18, 17),
-            Text = "Claude usage"
-        };
+        _titleLabel = new Label { AutoSize = true, Font = TitleFont, Text = Strings.PopupTitle };
+        _planLabel = new Label { AutoEllipsis = true, Font = SmallFont, Text = Strings.WaitingFirstUpdate };
+        _expiryLabel = new Label { AutoEllipsis = true, Font = SmallFont, Visible = false };
 
-        _planLabel = new Label
-        {
-            AutoEllipsis = true,
-            Font = new Font("Segoe UI", 8.5f),
-            ForeColor = AppPalette.Muted,
-            Location = new Point(20, 47),
-            Size = new Size(260, 20),
-            Text = "Waiting for the first update…"
-        };
-
-        var closeButton = MakeFlatButton("×", new Size(34, 34));
-        closeButton.AccessibleName = "Close usage window";
-        closeButton.Font = new Font("Segoe UI", 14f);
-        closeButton.Location = new Point(ClientSize.Width - 51, 13);
-        closeButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        closeButton.Click += (_, _) => Hide();
+        _closeButton = MakeFlatButton("×");
+        _closeButton.AccessibleName = Strings.CloseWindow;
+        _closeButton.Font = CloseFont;
+        _closeButton.Click += (_, _) => Hide();
 
         _metricsPanel = new FlowLayoutPanel
         {
             AutoScroll = false,
-            BackColor = AppPalette.Window,
             FlowDirection = FlowDirection.TopDown,
-            Location = new Point(18, 76),
             Margin = Padding.Empty,
             Padding = Padding.Empty,
-            Size = new Size(ClientSize.Width - 36, 226),
             WrapContents = false
         };
 
         _statusLabel = new Label
         {
             AutoEllipsis = true,
-            Font = new Font("Segoe UI", 8.5f),
-            ForeColor = AppPalette.Muted,
-            Location = new Point(18, ClientSize.Height - 31),
-            Size = new Size(245, 20),
-            Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
-            TextAlign = ContentAlignment.MiddleLeft,
-            Text = "Not updated yet"
+            Font = SmallFont,
+            Text = Strings.NotUpdatedYet,
+            TextAlign = ContentAlignment.TopLeft
         };
 
-        _refreshButton = MakeFlatButton("Refresh", new Size(88, 30));
-        _refreshButton.AccessibleName = "Refresh usage now";
-        _refreshButton.Location = new Point(ClientSize.Width - 106, ClientSize.Height - 39);
-        _refreshButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
+        _actionButton = MakeFlatButton(Strings.SignIn);
+        _actionButton.AccessibleName = Strings.SignIn;
+        _actionButton.Visible = false;
+        _actionButton.Click += (_, _) =>
+            MessageBox.Show(Strings.HowToSignIn, AppInfoText(), MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        _refreshButton = MakeFlatButton(Strings.Refresh);
+        _refreshButton.AccessibleName = Strings.RefreshUsageNow;
         _refreshButton.Click += (_, _) => RefreshRequested?.Invoke(this, EventArgs.Empty);
 
-        Controls.AddRange([titleLabel, _planLabel, closeButton, _metricsPanel, _statusLabel, _refreshButton]);
+        Controls.AddRange([_titleLabel, _planLabel, _expiryLabel, _closeButton, _metricsPanel, _statusLabel, _actionButton, _refreshButton]);
 
         _countdownTimer = new System.Windows.Forms.Timer { Interval = 30_000 };
         _countdownTimer.Tick += (_, _) =>
@@ -95,11 +85,14 @@ internal sealed class UsagePopupForm : Form
         };
         _countdownTimer.Start();
 
-        Deactivate += (_, _) => Hide();
         Paint += DrawBorder;
+        ApplyTheme();
+        RelayoutChrome();
     }
 
     public event EventHandler? RefreshRequested;
+
+    public DateTimeOffset LastHiddenAt { get; private set; } = DateTimeOffset.MinValue;
 
     protected override CreateParams CreateParams
     {
@@ -112,54 +105,110 @@ internal sealed class UsagePopupForm : Form
         }
     }
 
+    private float DpiScale => DeviceDpi / 96f;
+
+    private int S(float value) => (int)Math.Round(value * DpiScale);
+
     public void SetLoading()
     {
         _refreshButton.Enabled = false;
-        _refreshButton.Text = "Updating…";
+        _refreshButton.Text = Strings.Updating;
         _statusLabel.ForeColor = AppPalette.Muted;
-        _statusLabel.Text = "Contacting Anthropic…";
+        _statusLabel.Text = Strings.ContactingAnthropic;
     }
 
-    public void SetSnapshot(UsageSnapshot snapshot)
+    public void SetSnapshot(UsageSnapshot snapshot, IReadOnlyDictionary<string, IReadOnlyList<double>>? history = null)
     {
-        _snapshot = snapshot;
+        _history = history;
+        _actionShown = false;
+        _actionButton.Visible = false;
+
         _metricsPanel.SuspendLayout();
+        // Dispose the previous rows before clearing so their native handles are not
+        // orphaned to the finalizer on every refresh.
+        foreach (Control control in _metricsPanel.Controls)
+        {
+            control.Dispose();
+        }
         _metricsPanel.Controls.Clear();
         foreach (var metric in snapshot.Metrics)
         {
             _metricsPanel.Controls.Add(new UsageMetricControl(metric)
             {
-                Width = _metricsPanel.ClientSize.Width
+                Width = _metricsPanel.ClientSize.Width,
+                History = LookupHistory(metric.Label)
             });
         }
         _metricsPanel.ResumeLayout();
 
         _planLabel.Text = string.IsNullOrWhiteSpace(snapshot.PlanName)
-            ? "Claude Code subscription"
-            : HumanizePlan(snapshot.PlanName);
+            ? Strings.SubscriptionGeneric
+            : HumanizePlan(snapshot.PlanName!);
+
+        UpdateExpiry(snapshot.TokenExpiresAt);
+
         _statusLabel.ForeColor = AppPalette.Muted;
-        _statusLabel.Text = $"Updated {snapshot.UpdatedAt.LocalDateTime:t}";
-        _statusLabel.AccessibleDescription = $"Credentials: {snapshot.CredentialSource}";
+        _statusLabel.Text = Strings.UpdatedAt(snapshot.UpdatedAt.LocalDateTime.ToString("t"));
+        _statusLabel.AccessibleDescription = Strings.CredentialsSource(snapshot.CredentialSource);
         FinishLoading();
+        RelayoutChrome();
     }
 
-    public void SetError(string message)
+    public void SetError(string message, bool authError)
     {
         _statusLabel.ForeColor = AppPalette.Red;
         _statusLabel.Text = message;
         _statusLabel.AccessibleDescription = message;
+        _actionShown = authError;
+        _actionButton.Visible = authError;
+        _expiryShown = false;
+        _expiryLabel.Visible = false;
         FinishLoading();
+        RelayoutChrome();
     }
 
     public void ShowNearTray()
     {
+        // Realise the handle/size first so positioning uses the final dimensions.
+        if (!Visible)
+        {
+            Show();
+        }
+
         var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
         var x = Math.Clamp(Cursor.Position.X - Width / 2, workingArea.Left + 8, workingArea.Right - Width - 8);
         var y = workingArea.Bottom - Height - 8;
         Location = new Point(x, y);
-
-        Show();
         Activate();
+    }
+
+    /// <summary>Re-applies the active palette; call after the theme preference changes.</summary>
+    public void ApplyTheme()
+    {
+        BackColor = AppPalette.Window;
+        ForeColor = AppPalette.Text;
+        _metricsPanel.BackColor = AppPalette.Window;
+        _titleLabel.ForeColor = AppPalette.Text;
+        _planLabel.ForeColor = AppPalette.Muted;
+        _expiryLabel.ForeColor = AppPalette.Orange;
+        _statusLabel.ForeColor = AppPalette.Muted;
+        StyleButton(_closeButton);
+        StyleButton(_refreshButton);
+        StyleButton(_actionButton);
+        Invalidate();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        RelayoutChrome();
+    }
+
+    protected override void OnDeactivate(EventArgs e)
+    {
+        base.OnDeactivate(e);
+        LastHiddenAt = DateTimeOffset.UtcNow;
+        Hide();
     }
 
     protected override void Dispose(bool disposing)
@@ -171,29 +220,125 @@ internal sealed class UsagePopupForm : Form
         base.Dispose(disposing);
     }
 
+    private void UpdateExpiry(DateTimeOffset? expiresAt)
+    {
+        if (!expiresAt.HasValue)
+        {
+            _expiryShown = false;
+            _expiryLabel.Visible = false;
+            return;
+        }
+
+        var remaining = expiresAt.Value - DateTimeOffset.Now;
+        // Only warn when the sign-in is close to lapsing, to avoid clutter.
+        if (remaining <= TimeSpan.Zero || remaining > TimeSpan.FromHours(12))
+        {
+            _expiryShown = false;
+            _expiryLabel.Visible = false;
+            return;
+        }
+
+        _expiryLabel.Text = Strings.ExpiresIn(FormatShort(remaining));
+        _expiryShown = true;
+        _expiryLabel.Visible = true;
+    }
+
+    private static string FormatShort(TimeSpan remaining)
+    {
+        if (remaining.TotalHours >= 1)
+        {
+            return Strings.ShortHoursMinutes((int)remaining.TotalHours, remaining.Minutes);
+        }
+
+        return Strings.ShortMinutes(Math.Max(1, remaining.Minutes));
+    }
+
+    private IReadOnlyList<double>? LookupHistory(string label) =>
+        _history is not null && _history.TryGetValue(label, out var series) ? series : null;
+
+    private void RelayoutChrome()
+    {
+        var width = S(380);
+        var padding = S(18);
+        var inner = width - padding * 2;
+
+        _titleLabel.Location = new Point(padding, S(16));
+        _planLabel.Location = new Point(padding + S(2), S(46));
+        _planLabel.Size = new Size(inner - S(40), S(20));
+
+        _closeButton.Size = new Size(S(34), S(34));
+        _closeButton.Location = new Point(width - padding - _closeButton.Width + S(3), S(13));
+
+        var panelTop = S(76);
+        _metricsPanel.Location = new Point(padding, panelTop);
+        _metricsPanel.Width = inner;
+
+        // Size the panel to its rows so extra model windows are never clipped.
+        var content = 0;
+        foreach (Control control in _metricsPanel.Controls)
+        {
+            control.Width = _metricsPanel.ClientSize.Width;
+            content += control.Height + control.Margin.Top + control.Margin.Bottom;
+        }
+        if (content == 0)
+        {
+            content = S(80);
+        }
+        _metricsPanel.Height = content;
+
+        var y = panelTop + content + S(4);
+        // Position the expiry label from the tracked flag (not Control.Visible,
+        // which is false until the form is shown); reserve space only when shown.
+        _expiryLabel.Location = new Point(padding, y);
+        _expiryLabel.Size = new Size(inner, S(18));
+        if (_expiryShown)
+        {
+            y += S(20);
+        }
+
+        _statusLabel.Location = new Point(padding, y);
+        _statusLabel.Size = new Size(inner, S(32));
+
+        var buttonY = y + S(34);
+        var buttonHeight = S(30);
+        var refreshWidth = S(88);
+        _refreshButton.Size = new Size(refreshWidth, buttonHeight);
+        _refreshButton.Location = new Point(width - padding - refreshWidth, buttonY);
+
+        if (_actionShown)
+        {
+            var actionWidth = S(80);
+            _actionButton.Size = new Size(actionWidth, buttonHeight);
+            _actionButton.Location = new Point(width - padding - refreshWidth - S(8) - actionWidth, buttonY);
+        }
+
+        ClientSize = new Size(width, buttonY + buttonHeight + padding);
+    }
+
     private void FinishLoading()
     {
         _refreshButton.Enabled = true;
-        _refreshButton.Text = "Refresh";
+        _refreshButton.Text = Strings.Refresh;
     }
 
-    private static Button MakeFlatButton(string text, Size size)
+    private static Button MakeFlatButton(string text) => new()
     {
-        var button = new Button
-        {
-            BackColor = AppPalette.Surface,
-            Cursor = Cursors.Hand,
-            FlatStyle = FlatStyle.Flat,
-            ForeColor = AppPalette.Text,
-            Size = size,
-            Text = text,
-            UseVisualStyleBackColor = false
-        };
+        Cursor = Cursors.Hand,
+        FlatStyle = FlatStyle.Flat,
+        Text = text,
+        UseVisualStyleBackColor = false
+    };
+
+    private static void StyleButton(Button button)
+    {
+        button.BackColor = AppPalette.Surface;
+        button.ForeColor = AppPalette.Text;
         button.FlatAppearance.BorderColor = AppPalette.Border;
         button.FlatAppearance.MouseOverBackColor = AppPalette.SurfaceHover;
         button.FlatAppearance.MouseDownBackColor = AppPalette.Track;
-        return button;
     }
+
+    private static string AppInfoText() => AppInfo.Name;
 
     private static string HumanizePlan(string plan)
     {
