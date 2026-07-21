@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ClaudeUsageTray</AssemblyName>
+    <RootNamespace>ClaudeUsageTray</RootNamespace>
+    <Version>0.1.0</Version>
+    <Authors>Claude Usage Tray contributors</Authors>
+    <Description>Unofficial Windows tray monitor for Claude Code usage limits.</Description>
+    <Copyright>Copyright (c) Claude Usage Tray contributors</Copyright>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+</Project>

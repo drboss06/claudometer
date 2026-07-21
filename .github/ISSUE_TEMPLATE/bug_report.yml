@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a reproducible problem in Claude Usage Tray
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never paste access tokens or the contents of `.credentials.json`.
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: auth_location
+    attributes:
+      label: Claude Code location
+      options:
+        - Native Windows
+        - WSL
+        - Environment variable
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include steps to reproduce and the visible error, with secrets removed.
+    validations:
+      required: true

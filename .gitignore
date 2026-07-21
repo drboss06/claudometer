@@ -1,0 +1,21 @@
+# Build output
+**/bin/
+**/obj/
+publish/
+artifacts/
+
+# Local .NET SDK state
+.dotnet-home/
+
+# IDE and OS files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+
+# Never commit Claude credentials
+.credentials.json
+*.credentials.json
