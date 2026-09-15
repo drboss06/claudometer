@@ -32,4 +32,4 @@ jobs:
         run: dotnet build ClaudeUsageTray.sln --configuration Release
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@e0647621c2984b5ed2f768cb892365bf2a616ad1 # v4
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
